@@ -10,6 +10,7 @@
 
 package org.junit.jupiter.engine.descriptor;
 
+import static org.junit.jupiter.engine.Constants.DEFAULT_TEST_INSTANCE_LIFECYCLE_PROPERTY_NAME;
 import static org.junit.jupiter.engine.descriptor.LifecycleMethodUtils.findAfterAllMethods;
 import static org.junit.jupiter.engine.descriptor.LifecycleMethodUtils.findAfterEachMethods;
 import static org.junit.jupiter.engine.descriptor.LifecycleMethodUtils.findBeforeAllMethods;
@@ -21,6 +22,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -43,6 +45,7 @@ import org.junit.platform.commons.meta.API;
 import org.junit.platform.commons.util.AnnotationUtils;
 import org.junit.platform.commons.util.Preconditions;
 import org.junit.platform.commons.util.ReflectionUtils;
+import org.junit.platform.engine.ConfigurationParameters;
 import org.junit.platform.engine.TestDescriptor;
 import org.junit.platform.engine.TestTag;
 import org.junit.platform.engine.UniqueId;
@@ -65,7 +68,8 @@ public class ClassTestDescriptor extends JupiterTestDescriptor {
 	private static final ExecutableInvoker executableInvoker = new ExecutableInvoker();
 
 	private final Class<?> testClass;
-	private final Lifecycle lifecycle;
+
+	private Lifecycle lifecycle;
 
 	private List<Method> beforeAllMethods;
 	private List<Method> afterAllMethods;
@@ -83,7 +87,6 @@ public class ClassTestDescriptor extends JupiterTestDescriptor {
 			defaultDisplayNameGenerator), new ClassSource(testClass));
 
 		this.testClass = testClass;
-		this.lifecycle = getTestInstanceLifecycle(testClass);
 	}
 
 	// --- TestDescriptor ------------------------------------------------------
@@ -117,6 +120,8 @@ public class ClassTestDescriptor extends JupiterTestDescriptor {
 
 	@Override
 	public JupiterEngineExecutionContext prepare(JupiterEngineExecutionContext context) {
+		this.lifecycle = getTestInstanceLifecycle(testClass, context.getConfigurationParameters());
+
 		this.beforeAllMethods = findBeforeAllMethods(testClass, this.lifecycle == Lifecycle.PER_METHOD);
 		this.afterAllMethods = findAfterAllMethods(testClass, this.lifecycle == Lifecycle.PER_METHOD);
 		this.beforeEachMethods = findBeforeEachMethods(testClass);
@@ -291,12 +296,33 @@ public class ClassTestDescriptor extends JupiterTestDescriptor {
 		executableInvoker.invoke(method, testInstance, context, registry);
 	}
 
-	private static TestInstance.Lifecycle getTestInstanceLifecycle(Class<?> testClass) {
+	private static TestInstance.Lifecycle getTestInstanceLifecycle(Class<?> testClass,
+			ConfigurationParameters configurationParameters) {
+
 		// @formatter:off
 		return AnnotationUtils.findAnnotation(testClass, TestInstance.class)
 				.map(TestInstance::value)
-				.orElse(Lifecycle.PER_METHOD);
+				.orElseGet(() -> getDefaultTestInstanceLifecycle(configurationParameters));
 		// @formatter:on
+	}
+
+	private static TestInstance.Lifecycle getDefaultTestInstanceLifecycle(
+			ConfigurationParameters configurationParameters) {
+
+		Optional<String> optional = configurationParameters.get(DEFAULT_TEST_INSTANCE_LIFECYCLE_PROPERTY_NAME);
+		if (optional.isPresent()) {
+			try {
+				String constantName = optional.get().trim().toUpperCase();
+				Lifecycle lifecycle = TestInstance.Lifecycle.valueOf(constantName);
+				// TODO Log info message.
+				return lifecycle;
+			}
+			catch (Exception ex) {
+				// TODO Log error message.
+			}
+		}
+
+		return Lifecycle.PER_METHOD;
 	}
 
 }
